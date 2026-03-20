@@ -2,6 +2,18 @@
 
 Fast async [Starship](https://starship.rs/) prompt for [Fish shell](https://fishshell.com/) — no dependencies.
 
+## Prerequisites
+
+- [Fish shell](https://fishshell.com/) 3.4+
+- [Starship](https://starship.rs/) installed and on your `$PATH`
+
+```fish
+# Verify starship is available
+starship --version
+```
+
+See the [Starship installation guide](https://starship.rs/guide/#%F0%9F%9A%80-installation) if you don't have it yet.
+
 ## What it does
 
 1. **Caches `starship init` output** to disk and sources it instantly on shell startup
