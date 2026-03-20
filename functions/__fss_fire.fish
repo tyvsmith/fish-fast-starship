@@ -43,10 +43,25 @@ function __fss_fire --description 'Capture state, show loading indicator, spawn 
             test -e $__fss_tmpdir/right_prompt; and string collect <$__fss_tmpdir/right_prompt
         end
 
-        # First prompt: render synchronously (accepts one-time latency)
-        __fss_orig_fish_prompt >$__fss_tmpdir/prompt
-        __fss_orig_fish_right_prompt >$__fss_tmpdir/right_prompt
-        return
+        # Write external render script (fish func & doesn't background in fish 4+)
+        printf '%s\n' '#!/bin/sh' \
+            'starship prompt "$@" >"$FSS_TMPDIR/prompt.tmp" && mv "$FSS_TMPDIR/prompt.tmp" "$FSS_TMPDIR/prompt"' \
+            'starship prompt --right "$@" >"$FSS_TMPDIR/right_prompt.tmp" && mv "$FSS_TMPDIR/right_prompt.tmp" "$FSS_TMPDIR/right_prompt"' \
+            'kill -USR1 "$FSS_PPID"' >$__fss_tmpdir/render.sh
+        chmod +x $__fss_tmpdir/render.sh
+
+        # First prompt: show fast sync prompt, full render happens async below
+        if test -e "$__fss_sync_conf"
+            STARSHIP_CONFIG=$__fss_sync_conf command starship prompt \
+                --terminal-width="$COLUMNS" --status=0 --pipestatus=0 --keymap=insert \
+                --cmd-duration=0 --jobs=0 \
+                >$__fss_tmpdir/prompt
+        else
+            # No sync config: fall back to synchronous first prompt
+            __fss_orig_fish_prompt >$__fss_tmpdir/prompt
+            __fss_orig_fish_right_prompt >$__fss_tmpdir/right_prompt
+            return
+        end
     end
 
     # === Capture state (status/pipestatus MUST be first — they reset on any builtin) ===
@@ -78,8 +93,13 @@ function __fss_fire --description 'Capture state, show loading indicator, spawn 
         command kill $__fss_bg_pid 2>/dev/null
     end
 
-    # === Spawn background render ===
-    __fss_render &
+    # === Spawn background render via external script (fish func & blocks in fish 4+) ===
+    set -l ps (string join " " $__fss_last_pipestatus)
+    FSS_TMPDIR=$__fss_tmpdir FSS_PPID=$__fss_parent_pid \
+        command $__fss_tmpdir/render.sh \
+            --terminal-width="$__fss_width" --status=$__fss_last_status \
+            --pipestatus="$ps" --keymap=$__fss_last_keymap \
+            --cmd-duration=$__fss_last_duration --jobs=$__fss_last_jobs &
     set -g __fss_bg_pid $last_pid
     disown $__fss_bg_pid 2>/dev/null
 end
