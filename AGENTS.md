@@ -16,9 +16,9 @@ functions/__fss_fire.fish          # On each prompt: one-time setup, capture sta
 ## How async works
 
 1. `starship init` is cached and sourced for env setup + transient prompt support
-2. On first prompt event, `__fss_fire` wraps `fish_prompt`/`fish_right_prompt` with tmpfile-reading stubs, writes an external `render.sh` script to tmpdir, and shows a fast sync prompt (no git_status)
-3. On each prompt event, `__fss_fire` captures state (`$status`, `$pipestatus`, `$CMD_DURATION`, jobs, keymap, width), writes a loading indicator to the tmpfile, then spawns `render.sh` as a background external process
-4. `render.sh` calls `starship prompt` with explicit flags, writes to tmpfiles atomically (`.tmp` + `mv`), sends `SIGUSR1`
+2. On first prompt event, `__fss_fire` wraps `fish_prompt`/`fish_right_prompt` with tmpfile-reading stubs and shows a fast sync prompt (no git_status)
+3. On each prompt event, `__fss_fire` captures state (`$status`, `$pipestatus`, `$CMD_DURATION`, jobs, keymap, width), writes a loading indicator to the tmpfile, then spawns `command fish --no-config -c "starship prompt ..." &` as a background process
+4. The background fish subprocess calls `starship prompt` with baked-in flags, writes to tmpfiles atomically (`.tmp` + `mv`), sends `SIGUSR1`
 5. Parent's signal handler calls `commandline -f repaint` — fish re-reads tmpfiles
 
 ## Conventions
@@ -31,7 +31,7 @@ functions/__fss_fire.fish          # On each prompt: one-time setup, capture sta
 ## Key Design Decisions
 
 - **Direct `starship prompt` calls**: Background render calls the starship binary directly with explicit flags — no variable serialization, no pipestatus reconstruction
-- **External script for background render**: `render.sh` is written to tmpdir and invoked with `command ... &` — fish 4+ does not truly background fish functions with `func &`, so an external script is required for async execution
+- **Background render via `command fish --no-config -c`**: Fish 4+ does not truly background fish functions with `func &` (they run synchronously in the same process). Instead, `__fss_fire` bakes captured state into a command string and spawns `command fish --no-config -c "..." &` which truly backgrounds as an external process
 - **Cached starship init**: Still used for env setup, transient prompt support, and helper functions — maintains compatibility with starship updates
 - **Transient prompts bypass async**: Both fish 4.1+ `--final-rendering` and legacy `$TRANSIENT` render synchronously — transient prompts must be instant
 - **First prompt is async**: Uses fast sync config (no git_status) for initial display, then renders full prompt in background
