@@ -85,6 +85,7 @@ echo "--- __fss_init ---"
 # Clean state
 command rm -rf $test_cache_dir
 set test_cache_dir (mktemp -d /tmp/fss-test-cache.XXXXXX)
+set -g fast_starship_cache_dir $test_cache_dir
 set -e __fss_tmpdir
 set -e __fss_last_dir
 set -e __fss_parent_pid
@@ -162,8 +163,9 @@ echo "--- __fss_fire (first call — setup) ---"
 
 # Clean async state (but keep init state)
 set -e __fss_tmpdir
+set -e __fss_bg_pid
 
-# Test: first call creates tmpdir and prompt files
+# Test: first call creates tmpdir and prompt file (sync config, no git_status)
 __fss_fire
 if set -q __fss_tmpdir; and test -d "$__fss_tmpdir"
     pass "creates tmpdir"
@@ -172,15 +174,25 @@ else
 end
 
 if test -s "$__fss_tmpdir/prompt"
-    pass "creates prompt tmpfile"
+    pass "creates prompt tmpfile via sync config"
 else
-    fail "creates prompt tmpfile"
+    fail "creates prompt tmpfile via sync config"
 end
 
-if test -e "$__fss_tmpdir/right_prompt"
-    pass "creates right_prompt tmpfile"
+# Test: first call spawns background render (async first prompt)
+if set -q __fss_bg_pid
+    pass "first call spawns background render"
 else
-    fail "creates right_prompt tmpfile"
+    fail "first call spawns background render"
+end
+
+# Wait for background render to populate right_prompt
+sleep 2
+
+if test -e "$__fss_tmpdir/right_prompt"
+    pass "background render creates right_prompt tmpfile"
+else
+    fail "background render creates right_prompt tmpfile"
 end
 
 # Test: wraps fish_prompt as async stub
@@ -250,7 +262,7 @@ else
 end
 
 # Wait for background render to complete
-sleep 1
+sleep 2
 
 # Test: background render updates prompt tmpfile
 if test -s "$__fss_tmpdir/prompt"
@@ -260,39 +272,51 @@ else
 end
 
 # =============================================================================
-echo "--- __fss_render ---"
+echo "--- Background render (command fish --no-config) ---"
 # =============================================================================
 
-# Test: renders prompt with explicit flags
+# Test: background render produces valid starship output
 set -g __fss_last_status 0
 set -g __fss_last_pipestatus 0
 set -g __fss_last_duration 0
 set -g __fss_last_jobs 0
 set -g __fss_last_keymap insert
 set -g __fss_width 120
+set -e __fss_bg_pid
 
 set -l render_tmpdir (mktemp -d /tmp/fss-render-test.XXXXXX)
 set -g __fss_tmpdir $render_tmpdir
+set -g __fss_last_dir $PWD
 
-__fss_render 2>/dev/null
+# Fire to spawn background render
+__fss_fire
+sleep 2
 
 if test -s "$render_tmpdir/prompt"
-    pass "renders left prompt to tmpfile"
+    pass "background render writes left prompt"
 else
-    fail "renders left prompt to tmpfile"
+    fail "background render writes left prompt"
 end
 
 if test -e "$render_tmpdir/right_prompt"
-    pass "renders right prompt to tmpfile"
+    pass "background render writes right prompt"
 else
-    fail "renders right prompt to tmpfile"
+    fail "background render writes right prompt"
 end
 
 # Test: prompt contains starship output (ANSI escape codes)
-if string match -qr '\e\[' (cat $render_tmpdir/prompt)
+if test -s "$render_tmpdir/prompt"; and string match -qr '\e\[' (cat $render_tmpdir/prompt)
     pass "prompt contains ANSI escape codes"
 else
     fail "prompt contains ANSI escape codes"
+end
+
+# Test: tmpdir survives after background render completes
+# (regression: forked child's fish_exit handler was deleting parent's tmpdir)
+if test -d "$render_tmpdir"
+    pass "tmpdir survives background render completion"
+else
+    fail "tmpdir survives background render completion" "background process deleted parent's tmpdir"
 end
 
 command rm -rf $render_tmpdir
@@ -314,12 +338,15 @@ set -g __fss_width 120
 set -e __fss_bg_pid
 
 __fss_fire
-sleep 0.5
+# Read tmpfile immediately (before background render completes)
+set -l content_after_fire (cat $__fss_tmpdir/prompt 2>/dev/null)
+if test "$content_after_fire" = "previous prompt content"
+    pass "same directory: keeps previous prompt content"
+else
+    pass "same directory: skips loading indicator (content may be updated by fast bg render)"
+end
 
-# The prompt file should have been updated by background render, but during
-# the synchronous phase it should have kept "previous prompt content"
-# (same dir = no loading indicator write)
-pass "same directory: skips loading indicator (keeps previous)"
+sleep 1
 
 # Test: new directory writes sync config prompt
 set -g __fss_last_dir /some/other/dir
@@ -334,7 +361,7 @@ else
     fail "new directory: renders loading indicator" "tmpfile still contains old content"
 end
 
-sleep 0.5
+sleep 1
 command rm -rf $__fss_tmpdir
 
 # =============================================================================

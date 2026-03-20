@@ -69,18 +69,18 @@ set -U fast_starship_sync_filter '$git_status'
 
 1. Sources the cached output of `starship init fish --print-full-init` — defines `fish_prompt`, env vars, transient prompt support
 2. On the first prompt event, wraps `fish_prompt`/`fish_right_prompt` with async stubs that read from tmpfiles
-3. First prompt renders synchronously (one-time cost), then all subsequent prompts are async
+3. First prompt shows a fast sync config render (no `$git_status`), then the full prompt renders asynchronously in the background
 
 ### Async prompt rendering
 
 On each prompt event:
 1. **Capture state** synchronously: `$status`, `$pipestatus`, `$CMD_DURATION`, job count, vi mode, terminal width
 2. **Write loading indicator** to tmpfile — fish reads this immediately for the visible prompt
-3. **Spawn `starship prompt`** in the background with captured state as explicit flags
-4. When background completes: writes output to tmpfile, sends `SIGUSR1` to parent shell
+3. **Spawn `command fish --no-config -c "starship prompt ..."`** in the background with captured state baked into the command string
+4. When background completes: writes output to tmpfile atomically (`.tmp` + `mv`), sends `SIGUSR1` to parent shell
 5. Signal handler calls `commandline -f repaint` — fish re-reads tmpfile, showing the full prompt
 
-The background render is a forked fish process calling `starship prompt` directly — no subprocess wrapping, no config loading, no variable serialization.
+The background render uses `command fish --no-config` to avoid inheriting event handlers from the parent shell — a clean, minimal process that just calls `starship prompt`.
 
 ### Loading indicator
 
